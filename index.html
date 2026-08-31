@@ -6,99 +6,44 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="theme-color" content="#000000" />
+  <meta name="theme-color" content="#07151c" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
   <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-      overscroll-behavior: none;
-      -webkit-overflow-scrolling: none;
-      overflow: hidden;
-      background: #000;
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    #app {
-      position: fixed;
-      inset: 0;
-      display: grid;
-      grid-template-rows: 1fr auto;
-    }
-    #camera-container {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-    }
-    #video, #overlay {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    #overlay {
-      pointer-events: none;
-    }
-    #ui-layer {
-      position: relative;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      padding: 16px 16px 24px;
-      background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.35));
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-    }
-    #status {
-      font-size: 14px;
-      opacity: 0.9;
-      text-align: center;
-    }
-    #toggle-btn {
-      appearance: none;
-      border: none;
-      border-radius: 9999px;
-      padding: 14px 20px;
-      font-size: 16px;
-      font-weight: 600;
-      background: #22c55e;
-      color: #000;
-      width: 100%;
-      touch-action: manipulation;
-    }
-    #toggle-btn:disabled {
-      background: #374151;
-      color: #9ca3af;
-    }
-    #error-banner {
-      display: none;
-      background: #ef4444;
-      color: #000;
-      padding: 10px 14px;
-      border-radius: 10px;
-      font-size: 13px;
-      text-align: center;
-    }
+    :root { --cyan: #54f5e4; --ink: #07151c; --orange: #ffb45c; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: #effffc; font-family: "Trebuchet MS", "Segoe UI", sans-serif; }
+    #app { position: fixed; inset: 0; display: grid; grid-template-rows: 1fr auto; background: radial-gradient(circle at 50% 10%, #16343b 0, var(--ink) 48%, #03090c 100%); }
+    #camera-container { position: relative; min-height: 0; overflow: hidden; background: #020607; }
+    #video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    #video { filter: saturate(.82) contrast(1.05); }
+    #overlay { pointer-events: none; }
+    #camera-container::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(rgba(84,245,228,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(84,245,228,.035) 1px, transparent 1px); background-size: 32px 32px; mix-blend-mode: screen; }
+    #ui-layer { position: relative; z-index: 10; padding: 14px 16px max(18px, env(safe-area-inset-bottom)); border-top: 1px solid rgba(84,245,228,.32); background: rgba(4,18,23,.92); box-shadow: 0 -12px 36px rgba(0,0,0,.3); }
+    #toggle-btn { min-height: 52px; border: 1px solid var(--cyan); border-radius: 4px; background: var(--cyan); color: #061217; letter-spacing: .08em; text-transform: uppercase; touch-action: manipulation; transition: background .2s, color .2s; }
+    #toggle-btn:disabled { border-color: #426067; background: #263b40; color: #839da1; }
+    #error-banner { display: none; margin-bottom: 10px; border-left: 3px solid #ff7373; padding: 8px 10px; background: rgba(95,25,30,.8); color: #ffd5d5; font-size: 12px; }
   </style>
 </head>
 <body>
-  <div id="app">
-    <div id="camera-container">
+  <main id="app">
+    <section id="camera-container" aria-label="Live camera view">
       <video id="video" playsinline muted autoplay></video>
       <canvas id="overlay"></canvas>
-    </div>
-    <div id="ui-layer">
+      <div class="absolute left-4 top-4 z-10 flex items-center gap-2 text-xs uppercase tracking-[.18em] text-[#54f5e4]">
+        <span class="h-2 w-2 animate-pulse rounded-full bg-[#54f5e4]"></span><span>Optical scan</span>
+      </div>
+    </section>
+    <section id="ui-layer">
       <div id="error-banner"></div>
-      <div id="status">Initializing…</div>
-      <button id="toggle-btn" disabled>Start Scanning</button>
-    </div>
-  </div>
+      <div class="mb-3 flex items-end justify-between">
+        <div><p class="m-0 text-[10px] uppercase tracking-[.2em] text-[#8aaeb0]">Neural vision / COCO SSD</p><p id="status" class="m-0 mt-1 text-sm text-[#effffc]">Initializing...</p></div>
+        <span id="object-count" class="text-xs tabular-nums text-[#ffb45c]">0 targets</span>
+      </div>
+      <button id="toggle-btn" class="w-full text-sm font-bold" disabled>Start scanning</button>
+    </section>
+  </main>
 
   <script>
     (function () {
@@ -106,147 +51,142 @@
       const canvas = document.getElementById('overlay');
       const ctx = canvas.getContext('2d');
       const statusEl = document.getElementById('status');
+      const countEl = document.getElementById('object-count');
       const toggleBtn = document.getElementById('toggle-btn');
       const errorBanner = document.getElementById('error-banner');
-
       let model = null;
       let stream = null;
-      let detecting = false;
-      let animationId = null;
+      let isScanning = false;
+      let isDetecting = false;
+      let predictions = [];
+      let detectionRun = 0;
 
-      function showError(msg) {
-        errorBanner.textContent = msg;
+      function showError(message) {
+        errorBanner.textContent = message;
         errorBanner.style.display = 'block';
-        statusEl.textContent = 'Camera unavailable';
+        statusEl.textContent = 'System unavailable';
         toggleBtn.disabled = true;
       }
 
       function resizeCanvasToVideo() {
         const rect = video.getBoundingClientRect();
-        canvas.width = rect.width;
-        canvas.height = rect.height;
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.max(1, Math.round(rect.width * pixelRatio));
+        canvas.height = Math.max(1, Math.round(rect.height * pixelRatio));
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+        ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       }
 
-      function drawBoxes(predictions) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (!predictions || predictions.length === 0) return;
+      function drawBoxes() {
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+        ctx.clearRect(0, 0, width, height);
+        countEl.textContent = predictions.length + (predictions.length === 1 ? ' target' : ' targets');
+        if (!isScanning || !video.videoWidth || !predictions.length) return;
 
-        const videoRect = video.getBoundingClientRect();
-        const scaleX = canvas.width / videoRect.width;
-        const scaleY = canvas.height / videoRect.height;
-
-        ctx.lineWidth = 3;
-        ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+        const scale = Math.max(width / video.videoWidth, height / video.videoHeight);
+        const offsetX = (width - video.videoWidth * scale) / 2;
+        const offsetY = (height - video.videoHeight * scale) / 2;
+        ctx.lineWidth = 2;
+        ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
         ctx.textBaseline = 'top';
 
-        predictions.forEach(p => {
-          const [x, y, w, h] = p.bbox;
-          const sx = x * scaleX;
-          const sy = y * scaleY;
-          const sw = w * scaleX;
-          const sh = h * scaleY;
+        predictions.forEach(function (prediction) {
+          const [x, y, boxWidth, boxHeight] = prediction.bbox;
+          const screenX = x * scale + offsetX;
+          const screenY = y * scale + offsetY;
+          const screenWidth = boxWidth * scale;
+          const screenHeight = boxHeight * scale;
+          const label = prediction.class + ' ' + (prediction.score * 100).toFixed(0) + '%';
+          const labelWidth = ctx.measureText(label).width + 14;
+          const labelY = Math.max(0, screenY - 23);
 
-          const label = `${p.class} ${(p.score * 100).toFixed(0)}%`;
-          const textMetrics = ctx.measureText(label);
-          const textWidth = textMetrics.width;
-          const textHeight = 18;
-          const padding = 6;
-
-          ctx.strokeStyle = '#22c55e';
-          ctx.strokeRect(sx, sy, sw, sh);
-
-          ctx.fillStyle = 'rgba(0,0,0,0.75)';
-          ctx.fillRect(
-            sx,
-            sy - textHeight - padding,
-            textWidth + padding * 2,
-            textHeight + padding
-          );
-
-          ctx.fillStyle = '#fff';
-          ctx.fillText(label, sx + padding, sy - textHeight - padding + 2);
+          ctx.strokeStyle = '#54f5e4';
+          ctx.strokeRect(screenX, screenY, screenWidth, screenHeight);
+          ctx.fillStyle = 'rgba(4, 25, 30, .92)';
+          ctx.fillRect(screenX, labelY, labelWidth, 21);
+          ctx.fillStyle = '#54f5e4';
+          ctx.fillText(label, screenX + 7, labelY + 3);
         });
       }
 
-      async function detectFrame() {
-        if (!detecting || !model) return;
-        try {
-          const predictions = await model.detect(video);
-          drawBoxes(predictions);
-        } catch (e) {
-          // Silently ignore occasional frame errors to keep loop stable
+      function renderLoop() {
+        drawBoxes();
+        requestAnimationFrame(renderLoop);
+      }
+
+      async function detectionLoop(runId) {
+        if (isDetecting) return;
+        while (isScanning && runId === detectionRun && model) {
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+            await new Promise(function (resolve) { setTimeout(resolve, 16); });
+            continue;
+          }
+          isDetecting = true;
+          try {
+            const nextPredictions = await model.detect(video);
+            if (isScanning && runId === detectionRun) predictions = nextPredictions || [];
+          } catch (error) {
+            if (runId === detectionRun) predictions = [];
+          } finally {
+            isDetecting = false;
+          }
+          await new Promise(function (resolve) { setTimeout(resolve, 0); });
         }
-        animationId = requestAnimationFrame(detectFrame);
+        isDetecting = false;
       }
 
       async function startCamera() {
-        statusEl.textContent = 'Requesting camera…';
+        statusEl.textContent = 'Requesting camera...';
         try {
-          const constraints = {
-            video: {
-              facingMode: 'environment',
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            },
-            audio: false
-          };
-          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
           video.srcObject = stream;
           await video.play();
           resizeCanvasToVideo();
           window.addEventListener('resize', resizeCanvasToVideo);
           statusEl.textContent = 'Camera active';
           toggleBtn.disabled = false;
-          toggleBtn.textContent = 'Start Scanning';
-        } catch (e) {
-          console.error(e);
-          showError('Camera permission denied or not available. Ensure you’re on HTTPS and allow camera access.');
+        } catch (error) {
+          console.error(error);
+          showError('Camera permission denied or unavailable. Use HTTPS and allow camera access.');
         }
       }
 
       async function loadModel() {
-        statusEl.textContent = 'Loading AI model…';
+        statusEl.textContent = 'Loading AI model...';
         try {
           await tf.ready();
-          model = await cocoSsd.load();
+          model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
           statusEl.textContent = 'AI ready';
-        } catch (e) {
-          console.error(e);
-          showError('Failed to load AI model. Check your connection and try again.');
+        } catch (error) {
+          console.error(error);
+          showError('Failed to load AI model. Check the network connection.');
         }
       }
 
-      toggleBtn.addEventListener('click', async () => {
-        if (!model) {
-          statusEl.textContent = 'AI not ready yet…';
-          return;
-        }
-        if (!stream) {
-          await startCamera();
-          if (!stream) return;
-        }
-        detecting = !detecting;
-        if (detecting) {
-          toggleBtn.textContent = 'Stop Scanning';
-          toggleBtn.style.background = '#ef4444';
-          toggleBtn.style.color = '#fff';
+      toggleBtn.addEventListener('click', async function () {
+        if (!model) return;
+        if (!stream) { await startCamera(); if (!stream) return; }
+        isScanning = !isScanning;
+        detectionRun += 1;
+        if (isScanning) {
+          toggleBtn.textContent = 'Stop scanning';
+          toggleBtn.style.background = '#ffb45c';
+          toggleBtn.style.color = '#061217';
           statusEl.textContent = 'Scanning active';
-          detectFrame();
+          detectionLoop(detectionRun);
         } else {
-          toggleBtn.textContent = 'Start Scanning';
-          toggleBtn.style.background = '#22c55e';
-          toggleBtn.style.color = '#000';
+          toggleBtn.textContent = 'Start scanning';
+          toggleBtn.style.background = '#54f5e4';
+          toggleBtn.style.color = '#061217';
           statusEl.textContent = 'Scanning paused';
-          if (animationId) cancelAnimationFrame(animationId);
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          predictions = [];
         }
       });
 
-      // Initialize
-      (async function init() {
-        await loadModel();
-        await startCamera();
-      })();
+      renderLoop();
+      (async function init() { await loadModel(); await startCamera(); })();
     })();
   </script>
 </body>
