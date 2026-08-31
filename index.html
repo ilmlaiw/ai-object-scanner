@@ -26,6 +26,8 @@
     #toggle-btn { min-height: 52px; border: 1px solid var(--cyan); border-radius: 4px; background: var(--cyan); color: #061217; letter-spacing: .08em; text-transform: uppercase; touch-action: manipulation; transition: background .2s, color .2s; }
     #toggle-btn:disabled { border-color: #426067; background: #263b40; color: #839da1; }
     #error-banner { display: none; margin-bottom: 10px; border-left: 3px solid #ff7373; padding: 8px 10px; background: rgba(95,25,30,.8); color: #ffd5d5; font-size: 12px; }
+    #status { text-shadow: 0 0 12px rgba(84,245,228,.8); transition: color .2s, text-shadow .2s; }
+    #status.status-error { color: #ff9a9a; text-shadow: 0 0 12px rgba(255,92,92,.75); }
     #hud-shell { position: absolute; inset: 0; pointer-events: none; }
     #log-panel { pointer-events: auto; position: absolute; top: 16px; right: 16px; width: min(240px, calc(100% - 32px)); max-height: 38vh; overflow: hidden; border: 1px solid rgba(84,245,228,.3); border-radius: 5px; background: rgba(4,18,23,.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 12px 30px rgba(0,0,0,.25); }
     #log-list { max-height: calc(38vh - 44px); overflow: auto; scrollbar-width: thin; }
@@ -124,7 +126,13 @@
         errorBanner.textContent = message;
         errorBanner.style.display = 'block';
         statusEl.textContent = 'System unavailable';
+        statusEl.classList.add('status-error');
         toggleBtn.disabled = true;
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+        statusEl.classList.remove('status-error');
       }
 
       function resizeCanvasToVideo() {
@@ -338,14 +346,14 @@
       }
 
       async function startCamera() {
-        statusEl.textContent = 'Requesting camera...';
+        setStatus('Requesting camera...');
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
           video.srcObject = stream;
           await video.play();
           resizeCanvasToVideo();
           window.addEventListener('resize', resizeCanvasToVideo);
-          statusEl.textContent = 'Camera active';
+          setStatus('Camera active');
           toggleBtn.disabled = false;
         } catch (error) {
           console.error(error);
@@ -354,14 +362,31 @@
       }
 
       async function loadModel() {
-          statusEl.textContent = 'Loading graph model...';
+        setStatus('Initializing Neural Engine...');
         try {
+          if (!window.tf || typeof tf.setBackend !== 'function') throw new Error('TensorFlow.js is unavailable');
+          let backend = 'webgl';
+          try {
+            setStatus('Preparing WebGL accelerator...');
+            if (!await tf.setBackend('webgl')) throw new Error('WebGL backend was not registered');
+            await tf.ready();
+          } catch (webglError) {
+            console.warn('WebGL backend unavailable, using CPU fallback.', webglError);
+            backend = 'cpu';
+            setStatus('WebGL unavailable. Switching to CPU...');
+            if (!await tf.setBackend('cpu')) throw new Error('CPU backend was not registered');
+            await tf.ready();
+          }
+          setStatus('Downloading AI Weights (' + backend.toUpperCase() + ')...');
+          toggleBtn.disabled = true;
+          if (!graphModelUrl) throw new Error('Graph model URL is missing');
           await tf.ready();
           model = await tf.loadGraphModel(graphModelUrl, { fromTFHub: true });
-          statusEl.textContent = 'AI ready';
+          setStatus('Neural Engine Ready (' + backend.toUpperCase() + ')');
         } catch (error) {
           console.error(error);
-          showError('Failed to load AI model. Check the network connection.');
+          model = null;
+          showError('Model Load Failed: Check Connection');
         }
       }
 
