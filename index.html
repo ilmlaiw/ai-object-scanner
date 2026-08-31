@@ -12,6 +12,7 @@
   <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22AI%20Object%20Scanner%22%2C%22short_name%22%3A%22Scanner%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%2307151c%22%2C%22theme_color%22%3A%22%2307151c%22%2C%22start_url%22%3A%22.%22%7D" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
   <style>
     :root { --cyan: #54f5e4; --ink: #07151c; --orange: #ffb45c; }
     * { box-sizing: border-box; }
@@ -91,9 +92,6 @@
       const ambiguousClasses = new Set(['handbag', 'vase', 'remote', 'cell phone', 'backpack', 'suitcase', 'bowl', 'bottle']);
       const smoothingFactor = 0.22;
       const missedFrameGrace = 3;
-      const modelUrl = 'https://tfhub.dev/tensorflow/efficientdet/lite2/detection/1/model.json';
-      const classLabels = ['', 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'];
-      const modelInputSize = 448;
 
       function playDetectionBlip() {
         if (audioMuted) return;
@@ -158,52 +156,14 @@
         return combinedArea > 0 ? intersection / combinedArea : 0;
       }
 
-      function outputTensor(outputs, names) {
-        for (const name of names) if (outputs && outputs[name]) return outputs[name];
-        return null;
-      }
-
-      function tensorList(outputs) {
-        if (Array.isArray(outputs)) return outputs;
-        if (outputs && typeof outputs === 'object' && !outputs.dataSync) return Object.values(outputs);
-        return [outputs];
-      }
-
-      async function detectObjects() {
-        const input = tf.tidy(function () {
-          return tf.image.resizeBilinear(tf.browser.fromPixels(video), [modelInputSize, modelInputSize]).toInt().expandDims(0);
+      function filterPredictions(rawPredictions) {
+        const filteredPredictions = [];
+        rawPredictions.forEach(function (prediction) {
+          const detectedClass = prediction.class || 'unknown object';
+          const threshold = ambiguousClasses.has(detectedClass) ? ambiguousDetectionScore : minimumDetectionScore;
+          if (prediction.score >= threshold) filteredPredictions.push(prediction);
         });
-        let outputs;
-        try {
-          outputs = await model.executeAsync(input);
-          const tensors = tensorList(outputs).filter(Boolean);
-          const boxesTensor = outputTensor(outputs, ['detection_boxes', 'boxes']) || tensors.find(function (tensor) { return tensor.shape && tensor.shape[tensor.shape.length - 1] === 4; });
-          const scoresTensor = outputTensor(outputs, ['detection_scores', 'scores']);
-          const classesTensor = outputTensor(outputs, ['detection_classes', 'classes']);
-          const countTensor = outputTensor(outputs, ['num_detections', 'count']);
-          const vectors = tensors.filter(function (tensor) { return tensor !== boxesTensor && tensor !== countTensor && tensor.size > 4; });
-          const scores = scoresTensor || vectors.find(function (tensor) { return tensor.dataSync().every(function (value) { return value >= 0 && value <= 1; }); });
-          const classes = classesTensor || vectors.find(function (tensor) { return tensor !== scores; });
-          if (!boxesTensor || !scores || !classes) return [];
-          const boxes = await boxesTensor.data();
-          const scoreValues = await scores.data();
-          const classValues = await classes.data();
-          const countValues = countTensor ? await countTensor.data() : [scoreValues.length];
-          const resultCount = Math.min(Math.round(countValues[0]), scoreValues.length, Math.floor(boxes.length / 4));
-          const results = [];
-          for (let index = 0; index < resultCount; index += 1) {
-            const score = scoreValues[index];
-            const className = classLabels[Math.round(classValues[index])] || 'unknown object';
-            const threshold = ambiguousClasses.has(className) ? ambiguousDetectionScore : minimumDetectionScore;
-            if (score < threshold) continue;
-            const [top, left, bottom, right] = [boxes[index * 4], boxes[index * 4 + 1], boxes[index * 4 + 2], boxes[index * 4 + 3]];
-            results.push({ class: className, score: score, bbox: [left * video.videoWidth, top * video.videoHeight, (right - left) * video.videoWidth, (bottom - top) * video.videoHeight] });
-          }
-          return results;
-        } finally {
-          input.dispose();
-          tensorList(outputs).filter(Boolean).forEach(function (tensor) { if (typeof tensor.dispose === 'function') tensor.dispose(); });
-        }
+        return filteredPredictions;
       }
 
       function updateTracks(predictions) {
@@ -314,7 +274,7 @@
           }
           isDetecting = true;
           try {
-            const nextPredictions = await detectObjects();
+            const nextPredictions = filterPredictions(await model.detect(video, 100, minimumDetectionScore));
             if (isScanning && runId === detectionRun) {
               predictions = Array.isArray(nextPredictions) ? nextPredictions : [];
               updateTracks(predictions);
@@ -349,8 +309,9 @@
       }
 
       async function loadModel() {
-        setStatus('Initializing Neural Engine...');
+        setStatus('Initializing AI...');
         try {
+          if (!window.tf || typeof tf.setBackend !== 'function') throw new Error('TensorFlow.js is unavailable');
           let backend = 'webgl';
           try {
             setStatus('Preparing WebGL accelerator...');
@@ -365,7 +326,8 @@
           }
           setStatus('Downloading AI Weights (' + backend.toUpperCase() + ')...');
           toggleBtn.disabled = true;
-          model = await tf.loadGraphModel(modelUrl, { fromTFHub: true });
+          if (!window.cocoSsd || typeof cocoSsd.load !== 'function') throw new Error('COCO-SSD library is unavailable');
+          model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
           setStatus('Neural Engine Ready (' + backend.toUpperCase() + ')');
         } catch (error) {
           console.error(error);
