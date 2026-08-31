@@ -60,6 +60,7 @@
       let isDetecting = false;
       let predictions = [];
       let detectionRun = 0;
+      const minimumDetectionScore = 0.3;
 
       function showError(message) {
         errorBanner.textContent = message;
@@ -98,7 +99,8 @@
           const screenY = y * scale + offsetY;
           const screenWidth = boxWidth * scale;
           const screenHeight = boxHeight * scale;
-          const label = prediction.class + ' ' + (prediction.score * 100).toFixed(0) + '%';
+          const detectedClass = prediction.class || 'unknown object';
+          const label = detectedClass + ' ' + (prediction.score * 100).toFixed(0) + '%';
           const labelWidth = ctx.measureText(label).width + 14;
           const labelY = Math.max(0, screenY - 23);
 
@@ -125,8 +127,10 @@
           }
           isDetecting = true;
           try {
-            const nextPredictions = await model.detect(video);
-            if (isScanning && runId === detectionRun) predictions = nextPredictions || [];
+            const nextPredictions = await model.detect(video, 100, minimumDetectionScore);
+            if (isScanning && runId === detectionRun) {
+              predictions = Array.isArray(nextPredictions) ? nextPredictions : [];
+            }
           } catch (error) {
             if (runId === detectionRun) predictions = [];
           } finally {
