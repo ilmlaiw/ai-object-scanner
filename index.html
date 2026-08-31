@@ -59,8 +59,11 @@
       let isScanning = false;
       let isDetecting = false;
       let predictions = [];
+      let trackedObjects = [];
       let detectionRun = 0;
       const minimumDetectionScore = 0.3;
+      const smoothingFactor = 0.22;
+      const missedFrameGrace = 3;
 
       function showError(message) {
         errorBanner.textContent = message;
@@ -79,12 +82,74 @@
         ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       }
 
+      function boxOverlap(firstBox, secondBox) {
+        const firstRight = firstBox[0] + firstBox[2];
+        const firstBottom = firstBox[1] + firstBox[3];
+        const secondRight = secondBox[0] + secondBox[2];
+        const secondBottom = secondBox[1] + secondBox[3];
+        const intersectionWidth = Math.max(0, Math.min(firstRight, secondRight) - Math.max(firstBox[0], secondBox[0]));
+        const intersectionHeight = Math.max(0, Math.min(firstBottom, secondBottom) - Math.max(firstBox[1], secondBox[1]));
+        const intersection = intersectionWidth * intersectionHeight;
+        const combinedArea = firstBox[2] * firstBox[3] + secondBox[2] * secondBox[3] - intersection;
+        return combinedArea > 0 ? intersection / combinedArea : 0;
+      }
+
+      function updateTracks(predictions) {
+        const matchedTrackIndexes = new Set();
+        const matchedPredictionIndexes = new Set();
+
+        predictions.forEach(function (prediction, predictionIndex) {
+          const detectedClass = prediction.class || 'unknown object';
+          let bestTrackIndex = -1;
+          let bestOverlap = 0.05;
+          trackedObjects.forEach(function (track, trackIndex) {
+            if (matchedTrackIndexes.has(trackIndex) || track.class !== detectedClass) return;
+            const overlap = boxOverlap(track.targetBox, prediction.bbox);
+            if (overlap > bestOverlap) {
+              bestOverlap = overlap;
+              bestTrackIndex = trackIndex;
+            }
+          });
+
+          if (bestTrackIndex >= 0) {
+            const track = trackedObjects[bestTrackIndex];
+            track.targetBox = prediction.bbox.slice();
+            track.score = prediction.score;
+            track.missedFrames = 0;
+            matchedTrackIndexes.add(bestTrackIndex);
+            matchedPredictionIndexes.add(predictionIndex);
+          }
+        });
+
+        trackedObjects.forEach(function (track, trackIndex) {
+          if (!matchedTrackIndexes.has(trackIndex)) track.missedFrames += 1;
+        });
+
+        predictions.forEach(function (prediction, predictionIndex) {
+          if (matchedPredictionIndexes.has(predictionIndex)) return;
+          trackedObjects.push({
+            class: prediction.class || 'unknown object',
+            bbox: prediction.bbox.slice(),
+            targetBox: prediction.bbox.slice(),
+            score: prediction.score,
+            missedFrames: 0
+          });
+        });
+        trackedObjects = trackedObjects.filter(function (track) { return track.missedFrames <= missedFrameGrace; });
+      }
+
+      function interpolateBox(currentBox, targetBox) {
+        return currentBox.map(function (value, index) {
+          return value + (targetBox[index] - value) * smoothingFactor;
+        });
+      }
+
       function drawBoxes() {
         const width = canvas.clientWidth;
         const height = canvas.clientHeight;
         ctx.clearRect(0, 0, width, height);
-        countEl.textContent = predictions.length + (predictions.length === 1 ? ' target' : ' targets');
-        if (!isScanning || !video.videoWidth || !predictions.length) return;
+        countEl.textContent = trackedObjects.length + (trackedObjects.length === 1 ? ' target' : ' targets');
+        if (!isScanning || !video.videoWidth || !trackedObjects.length) return;
 
         const scale = Math.max(width / video.videoWidth, height / video.videoHeight);
         const offsetX = (width - video.videoWidth * scale) / 2;
@@ -93,14 +158,14 @@
         ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
         ctx.textBaseline = 'top';
 
-        predictions.forEach(function (prediction) {
-          const [x, y, boxWidth, boxHeight] = prediction.bbox;
+        trackedObjects.forEach(function (track) {
+          track.bbox = interpolateBox(track.bbox, track.targetBox);
+          const [x, y, boxWidth, boxHeight] = track.bbox;
           const screenX = x * scale + offsetX;
           const screenY = y * scale + offsetY;
           const screenWidth = boxWidth * scale;
           const screenHeight = boxHeight * scale;
-          const detectedClass = prediction.class || 'unknown object';
-          const label = detectedClass + ' ' + (prediction.score * 100).toFixed(0) + '%';
+          const label = track.class + ' ' + (track.score * 100).toFixed(0) + '%';
           const labelWidth = ctx.measureText(label).width + 14;
           const labelY = Math.max(0, screenY - 23);
 
@@ -130,9 +195,13 @@
             const nextPredictions = await model.detect(video, 100, minimumDetectionScore);
             if (isScanning && runId === detectionRun) {
               predictions = Array.isArray(nextPredictions) ? nextPredictions : [];
+              updateTracks(predictions);
             }
           } catch (error) {
-            if (runId === detectionRun) predictions = [];
+            if (runId === detectionRun) {
+              predictions = [];
+              updateTracks(predictions);
+            }
           } finally {
             isDetecting = false;
           }
@@ -186,6 +255,7 @@
           toggleBtn.style.color = '#061217';
           statusEl.textContent = 'Scanning paused';
           predictions = [];
+          trackedObjects = [];
         }
       });
 
